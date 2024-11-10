@@ -6,16 +6,16 @@ class Metric(ABC):
     @abstractmethod
     def compute_value(self, y_true: np.ndarray, y_pred: np.ndarray) -> float:
         '''
-        :param y_true: true label 
-        :param y_pred: predicted label
-        :return: the metric value
+        :param y_true: фактические значения таргета
+        :param y_pred: предсказанные значения
+        :return: значение метрики
         '''
         pass
 
     @abstractmethod
     def get_name(self) -> str:
         '''
-        :return: the metric name for logging purposes
+        :return: название метрики для логирования
         '''
         pass
 
