@@ -1,5 +1,6 @@
 import logging
 from typing import DefaultDict
+from typing import Union
 import numpy as np
 from abc import ABC, abstractmethod
 from collections import defaultdict
@@ -34,7 +35,7 @@ class RandomForestEstimator(ABC):
         self.oob_score = None
 
     @abstractmethod
-    def _init_decision_tree(self):
+    def _init_decision_tree(self) -> Union[DecisionTreeClassifier, DecisionTreeRegressor]:
         '''
         :return: дерево решений
         '''
@@ -56,7 +57,7 @@ class RandomForestEstimator(ABC):
         '''
         self.n, self.p = X.shape
         row_idx = list(range(self.n))
-        for b in range(self.n_estimators):
+        for _ in range(self.n_estimators):
             sample_row_idx = np.random.choice(row_idx, size=self.n, replace=True)
             X_sampled, y_sampled = X[sample_row_idx, :], y[sample_row_idx]
             decision_tree = self._init_decision_tree()
@@ -89,7 +90,7 @@ class RandomForestEstimator(ABC):
         pass
 
 class MyRandomForestRegressor(RandomForestEstimator):
-    def _init_decision_tree(self):
+    def _init_decision_tree(self) -> Union[DecisionTreeClassifier, DecisionTreeRegressor]:
         assert self.criterion is not None, "Необходимо задать меру чистоты"
         return DecisionTreeRegressor(max_depth = self.max_depth,
                                      min_samples_split = self.min_samples_split,
@@ -105,7 +106,7 @@ class MyRandomForestRegressor(RandomForestEstimator):
         return np.mean(tree_predictions, axis=1)
     
 class MyRandomForestClassifier(RandomForestEstimator):
-    def _init_decision_tree(self):
+    def _init_decision_tree(self) -> Union[DecisionTreeClassifier, DecisionTreeRegressor]:
         assert self.criterion is not None, "Необходимо задать меру чистоты"
         return DecisionTreeClassifier(max_depth = self.max_depth,
                                       min_samples_split = self.min_samples_split,
@@ -131,3 +132,156 @@ class MyRandomForestClassifier(RandomForestEstimator):
             tree_predictions.append(prediction)
         tree_predictions = np.concatenate(tree_predictions, axis=1)
         return np.mean(tree_predictions, axis=1)
+
+class GradientBoostingEstimator(ABC):
+    '''
+    Интерфейс для градиентного бустинга для классификации и регрессии
+    '''
+
+    def __init__(self, learning_rate: float = 0.1, n_estimators: int = 100, 
+                 min_samples_split: int = 2, max_depth: int = 3, criterion: str | None = None):
+        '''
+        :param learning_rate: скорость обучения
+        :param n_estimators: кол-во моделей в ансамбле
+        :param min_samples_split: минимальное кол-во наблюдений в ноде для сплита
+        :param max_depth: максимальная глубина дерева
+        '''
+        self.learning_rate = learning_rate
+        self.n_estimators = n_estimators
+        self.min_samples_split = min_samples_split
+        self.max_depth = max_depth
+        self.criterion = criterion
+        self._decision_trees = []
+
+    @abstractmethod
+    def _init_decision_tree(self) -> DecisionTreeRegressor:
+        '''
+        :return: дерево решений
+        '''
+        pass
+
+    @abstractmethod
+    def _compute_initial_pred(self, y: np.ndarray) -> float:
+        '''
+        :return: первичное предсказание в ансамбле
+        '''
+        pass
+
+    @abstractmethod
+    def _update_leaf_nodes(self, 
+                           tree: DecisionTreeRegressor, 
+                           X: np.ndarray, y: np.ndarray, 
+                           pseudo_resid: np.ndarray):
+        '''
+        Рассчитывает оптимальное значение листа gamma для оптимизации функции потерь.
+        Для регрессии - среднее значение, преобразование не производится.
+        Для классификации - pseudo_resid / p(1 - p).
+
+        :param tree: дерево решений
+        :param X: матрица независимых переменных
+        :param y: зависимая переменная
+        :param pseudo_resid: антиградиент функции потерь на шаге t
+        '''
+        pass
+
+    @abstractmethod
+    def _transform_ensemble_pred(self, ensemble: np.ndarray) -> np.ndarray:
+        '''
+        Преобразовывает предсказание ансамбля на шаге t.
+        Для регрессии - преобразование не производится.
+        Для классификации - преобразовываем логарифм шансов в вероятность через сигмоиду.
+
+        :param ensemble: предсказание ансамбля на шаге t
+        :return: пердсказание ансамбля в форме вероятностей
+        '''
+        pass
+
+    def fit(self, X: np.ndarray, y: np.ndarray):
+        '''
+        :param X: матрица зависимых переменных
+        :param y: независимая переменная
+        '''
+        self.initial_pred = self._compute_initial_pred(y)
+        ensemble = np.full(X.shape[0], self.initial_pred)
+        for _ in range(self.n_estimators):
+            residuals = y - self._transform_ensemble_pred(ensemble)
+            decision_tree = self._init_decision_tree()
+            decision_tree.fit(X, residuals)
+            self._update_leaf_nodes(decision_tree, X, y, residuals)
+            self._decision_trees.append(decision_tree)
+            gamma = decision_tree.predict(X)
+            ensemble += self.learning_rate * gamma
+
+    @abstractmethod
+    def predict(self, X: np.ndarray) -> np.ndarray:
+        '''
+        :param X: матрица независимых перменных
+        :return: вектор предсказаний
+        '''
+        pass
+
+class MyGradientBoostingRegressor(GradientBoostingEstimator):
+    def _init_decision_tree(self)  -> DecisionTreeRegressor:
+        assert self.criterion is not None, "Необходимо задать меру чистоты"
+        return DecisionTreeRegressor(
+                    max_depth = self.max_depth,
+                    min_samples_split = self.min_samples_split,
+                    criterion = self.criterion)
+
+    def _compute_initial_pred(self, y: np.ndarray) -> float:
+        return np.mean(y)
+
+    def _update_leaf_nodes(self, 
+                           tree: DecisionTreeRegressor, 
+                           X: np.ndarray, y: np.ndarray, 
+                           pseudo_resid: np.ndarray):
+        pass
+
+    def _transform_ensemble_pred(self, ensemble: np.ndarray) -> np.ndarray:
+        return ensemble
+
+    def predict(self, X: np.ndarray) -> np.ndarray:
+        ensemble = np.full(X.shape[0], self.initial_pred)
+        for i in range(self.n_estimators):
+            ensemble += self.learning_rate * self._decision_trees[i].predict(X)
+        return ensemble
+
+class MyGradientBoostingClassifier(GradientBoostingEstimator):
+    def _init_decision_tree(self)  -> DecisionTreeRegressor:
+        assert self.criterion is not None, "Необходимо задать меру чистоты"
+        return DecisionTreeRegressor(
+                    max_depth = self.max_depth,
+                    min_samples_split = self.min_samples_split,
+                    criterion = self.criterion)
+
+    def _compute_initial_pred(self, y: np.ndarray) -> float:
+        p = np.mean(y)
+        return np.log(p / (1 - p))
+
+    def _update_leaf_nodes(self, 
+                           tree: DecisionTreeRegressor, 
+                           X: np.ndarray, y: np.ndarray, 
+                           pseudo_resid: np.ndarray):
+        leafs = tree.apply(X)
+        unique_leafs = np.unique(leafs)
+        for leaf in unique_leafs:
+            idx = np.nonzero(leafs == leaf)[0]
+            p = np.abs(y[idx] - pseudo_resid[idx])
+            assert not np.any((p < 0) | (p > 1)), "вероятность вне допустимого диапазона [0,1] при расчете значения листа"
+            numerator = np.average(pseudo_resid[idx])
+            denominator = np.average(p / (1 - p))
+            gamma = numerator / denominator
+            tree.tree_.value[leaf, 0, 0] = gamma    
+
+    def _transform_ensemble_pred(self, ensemble: np.ndarray) -> np.ndarray:
+        return 1 / (1 + np.exp(-ensemble))
+
+    def predict_proba(self, X: np.ndarray) -> np.ndarray:
+        ensemble = np.full(X.shape[0], self.initial_pred)
+        for i in range(self.n_estimators):
+            ensemble += self.learning_rate * self._decision_trees[i].predict(X)
+        return self._transform_ensemble_pred(ensemble)
+
+    def predict(self, X: np.ndarray) -> np.ndarray:
+        proba = self.predict_proba(X)
+        return (proba > 0.5).astype(int)
