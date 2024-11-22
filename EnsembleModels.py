@@ -173,9 +173,9 @@ class GradientBoostingEstimator(ABC):
                            X: np.ndarray, y: np.ndarray, 
                            pseudo_resid: np.ndarray):
         '''
-        Рассчитывает оптимальное значение листа gamma для оптимизации функции потерь.
-        Для регрессии - среднее значение, преобразование не производится.
-        Для классификации - pseudo_resid / p(1 - p).
+        Для регрессии: среднее значение, преобразование не производится.
+        Для классификации: -gradient / hessian. Посколько модель предсказывает логарифм шансов, 
+                           а обучается на вероятностях, необходимо преобразование
 
         :param tree: дерево решений
         :param X: матрица независимых переменных
@@ -192,7 +192,7 @@ class GradientBoostingEstimator(ABC):
         Для классификации - преобразовываем логарифм шансов в вероятность через сигмоиду.
 
         :param ensemble: предсказание ансамбля на шаге t
-        :return: пердсказание ансамбля в форме вероятностей
+        :return: преобразованное предсказание ансамбля
         '''
         pass
 
@@ -268,8 +268,8 @@ class MyGradientBoostingClassifier(GradientBoostingEstimator):
             idx = np.nonzero(leafs == leaf)[0]
             p = np.abs(y[idx] - pseudo_resid[idx])
             assert not np.any((p < 0) | (p > 1)), "вероятность вне допустимого диапазона [0,1] при расчете значения листа"
-            numerator = np.average(pseudo_resid[idx])
-            denominator = np.average(p / (1 - p))
+            numerator = np.mean(pseudo_resid[idx])
+            denominator = np.mean(p / (1 - p))
             gamma = numerator / denominator
             tree.tree_.value[leaf, 0, 0] = gamma    
 
