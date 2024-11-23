@@ -1,7 +1,12 @@
+import logging
 from abc import ABC, abstractmethod
 import numpy as np
 from scipy.spatial.distance import euclidean
-from typing import Callable, Tuple
+from typing import Callable
+from typing import Tuple
+
+logger = logging.getLogger('model training')
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', datefmt='%Y-%m-%d %H:%M:%S %p')
 
 class KNNEstimator(ABC):
     '''
