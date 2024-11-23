@@ -1,6 +1,7 @@
 import logging
 import numpy as np
 from abc import ABC, abstractmethod
+from typing import Callable
 
 
 logger = logging.getLogger('model training')
@@ -11,7 +12,7 @@ class LinearEstimator(ABC):
     Интерфейс для линейной и логистической регрессии с оптимизацией через градиентный спуск. 
     Функционал ошибки для регрессии - MSE, классификации - LogLoss.
     '''
-    def __init__(self, n_iter: int = 1000, learning_rate: float = 0.1, tolerance: float = 1e-4,
+    def __init__(self, n_iter: int = 1000, learning_rate: float | Callable = 0.1, tolerance: float = 1e-4,
                  penalty: str | None = None, alpha: float = 1.0, verbose: bool = False):
         '''
         :param n_iter: кол-во итераций градиентного спуска
