@@ -33,7 +33,7 @@ class KNNEstimator(ABC):
         self.X = X.copy()
         self.y = y.copy()
 
-    def apply_weights(self, distances: np.ndarray, neighbors: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
+    def _apply_weights(self, distances: np.ndarray, neighbors: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
         '''
         Расчитывает веса для n_neighbors ближайщих соседей
 
@@ -48,7 +48,7 @@ class KNNEstimator(ABC):
             weights_by_neighbor = np.squeeze(np.array([((1 / distance + 1e-4), neighbor) for distance, neighbor in zip(distances, neighbors)]))
             return weights_by_neighbor[:, 0], weights_by_neighbor[:, 1]
 
-    def compute_prediction(self, observation: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
+    def _compute_prediction(self, observation: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
         '''
         Расчитывает дистанцию для единичного наблюдения до всех наблюдений в обучающей выборке, выделяя n_neighbors ближайших соседей.
         Триггерит расчет весов для найденых ближайших соседей.
@@ -57,7 +57,7 @@ class KNNEstimator(ABC):
         :return: массив весов и массив лейблов
         '''
         n_neighbors = np.squeeze(np.array(sorted([(self.metric(x, observation), y) for x, y in zip(self.X, self.y)])[:self.n_neighbors]))
-        n_weights, n_labels = self.apply_weights(n_neighbors[:, 0], n_neighbors[:, 1])
+        n_weights, n_labels = self._apply_weights(n_neighbors[:, 0], n_neighbors[:, 1])
         return n_weights, n_labels
 
     @abstractmethod
@@ -68,7 +68,7 @@ class MyKNNRegressor(KNNEstimator):
     def predict(self, X: np.ndarray) -> np.ndarray:
         predictions = []
         for x in X:
-            weights, labels = self.compute_prediction(x)
+            weights, labels = self._compute_prediction(x)
             predictions.append(np.sum(weights * labels) / np.sum(weights))
         return np.array(predictions)
     
@@ -81,7 +81,7 @@ class MyKNNClassifiers(KNNEstimator):
         '''
         predictions = []
         for x in X:
-            weights, labels = self.compute_prediction(x)
+            weights, labels = self._compute_prediction(x)
             predictions.append(np.sum(weights[labels == 1]) / np.sum(weights))
         return np.array(predictions)
 
