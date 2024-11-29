@@ -58,17 +58,17 @@ class LinearEstimator(ABC):
         :param X: матрица независимых переменных
         :param y: зависимая переменная
         '''
-        self._X, self._y = self.add_constant(X).copy(), y.copy()
+        self._X, self._y = self.add_constant(X), y.copy()
         self.n, self.p = self._X.shape
-        self.fitted_weights = self._start_gradient_descent()
+        self.fitted_weights = self._trigger_gd()
         
-    def _start_gradient_descent(self) -> np.ndarray:
+    def _trigger_gd(self) -> np.ndarray:
         '''
         Запускает алгоритм градиентного спуска 
 
         :return: подобранный вектор весов
         '''
-        weights = np.random.normal(size=self.p, scale=1)
+        weights = np.random.normal(loc=0, scale=1, size=self.p)
         self.objective_path = [self._compute_loss(weights)] # функционал ошибки на всем пути расчета градиента
         self.weights_path = [weights] # веса на всем пути расчета градиента
         for epoch in range(self.n_iter):
@@ -161,3 +161,117 @@ class MyLogisticRegression(LinearEstimator):
         X = self.add_constant(X)
         probabilities = self.sigmoid(X, self.fitted_weights)
         return probabilities
+
+class MySVMClassifier():
+    '''
+    SVM с hinge loss и обучением через стохастический градиентный спуск
+    '''
+    def __init__(self, n_iter: int = 1000, learning_rate: float = 0.001, alpha: float = 1.0, tolerance: float = 1e-3, verbose = False):
+        '''
+        :param n_iter: кол-во итераций стохастического градиентного спуска
+        :param learning_rate: базовая скорость обучения (затухает на протяжении обучения)
+        :param alpha: коэффициент регуляризации, обратно пропорционален
+        :param tolerance: порог для критерии остнова
+        :param verbose: выводить ли информацию об обучении
+        '''
+        self.n_iter = n_iter
+        self.initial_learning_rate = learning_rate
+        self.learning_rate = learning_rate
+        self.alpha = 1 / alpha
+        self.tolerance = tolerance
+        self.verbose = verbose
+
+    @staticmethod
+    def add_constant(X: np.ndarray) -> np.ndarray:
+        '''
+        :return: исходный набор данных с добавленным полем-константой под intercept
+        '''
+        return np.hstack((np.ones(X.shape[0]).reshape(-1,1), X))
+    
+    def _transform_taget(self, y: np.ndarray) -> np.ndarray:
+        '''
+        return: преобразованная целевая переменная (в соотв. с теорией SVM y in {-1; 1})
+        '''
+        return np.where(y == 0, -1, 1)
+    
+    def _inverse_transform_target(self, y: np.ndarray) -> np.ndarray:
+        '''
+        return: целевая переменная в исходном виде
+        '''
+        return np.where(y == -1, 0, 1)
+    
+    def _compute_distance(self, x: np.ndarray, y: np.ndarray, weights: np.ndarray) -> float | np.ndarray:
+        '''
+        :param x: вектор или матрица независимых переменных
+        :param y: вектор зависимой переменной
+        :return: расстояние от наблюдения до разделяющей гиперплоскости
+        '''
+        return 1 - y * np.dot(x, weights)
+
+    def _compute_loss(self, x: np.ndarray, y: np.ndarray, weights: np.ndarray) -> float:
+        '''
+        :param x: вектор или матрица независимых переменных
+        :param y: вектор зависимой переменной
+        :param weights: вектор весов
+        :return: функционал ошибки с учетом заданных параметров
+        '''
+        hinge = np.mean(np.maximum(0, self._compute_distance(x, y, weights)))
+        l2 = 0.5 * np.dot(weights, weights)
+        return self.alpha * hinge + l2
+
+    def _compute_gradient(self, x: np.ndarray, y: np.ndarray, weights: np.ndarray) -> np.ndarray:
+        '''
+        :param x: вектор независимых переменных (на вход подается одиночное наблюдение)
+        :param y: вектор зависимой переменной
+        :param weights: вектор весов
+        :return: градиент функционала ошибки с учетом заданных параметров
+        '''
+        distance = self._compute_distance(x, y, weights)
+        if distance >= 1:
+            return weights
+        else:
+            return weights - self.alpha * y * x
+
+    def fit(self, X: np.ndarray, y: np.ndarray):
+        '''
+        :param X: матрица независимых переменных
+        :param y: вектор зависимой переменной
+        '''
+        self._X, self._y = self.add_constant(X), self._transform_taget(y)
+        self.n, self.p = self._X.shape
+        self.fitted_weights = self._trigger_sgd()
+
+    def _trigger_sgd(self) -> np.ndarray:
+        '''
+        Запускает алгоритм стохастического градиентного спуска 
+
+        :return: подобранный вектор весов
+        '''
+        weights = np.random.normal(loc=0, scale=0.1, size=self.p)
+        self.objective_path = [self._compute_loss(self._X, self._y, weights)] # считаем функционал ошибки на всей выборке
+        self.weights_path = [weights]
+        for epoch in range(self.n_iter):
+            ind = np.random.permutation(self.n)
+            X_shuffled = self._X[ind]
+            y_shuffled = self._y[ind]
+            for i in range(self.n):
+                step = self.learning_rate * self._compute_gradient(X_shuffled[i], y_shuffled[i], weights)
+                weights = weights - step
+            self.learning_rate = self.initial_learning_rate / (epoch + 1)
+            self.weights_path.append(weights)
+            self.objective_path.append(self._compute_loss(self._X, self._y, self.weights_path[-1]))
+            if np.abs(self.objective_path[-2] - self.objective_path[-1]) < self.tolerance:
+                logger.info(f'Алгоритм сошелся. Кол-во итераций: {epoch}')
+                break
+            if self.verbose == True and epoch % 10 == 0:
+                logger.info(f'Итерация: {epoch}; Функционал ошибки: {self._compute_loss(self._X, self._y, self.weights_path[-1])}')
+        return self.weights_path[-1]
+
+    def predict(self, X: np.ndarray) -> np.ndarray:
+        '''
+        :param X: матрица независимых переменных
+        :return: вектор предсказаний
+        '''
+        _X = self.add_constant(X)
+        predictions = np.sign(np.dot(_X, self.fitted_weights))
+        return self._inverse_transform_target(predictions)
