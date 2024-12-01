@@ -135,7 +135,8 @@ class MyRandomForestClassifier(RandomForestEstimator):
 
 class GradientBoostingEstimator(ABC):
     '''
-    Интерфейс для градиентного бустинга для классификации и регрессии
+    Интерфейс для градиентного бустинга для классификации и регрессии.
+    Функционал ошибки для регрессии - MSE, для классификации - LogLoss.
     '''
 
     def __init__(self, learning_rate: float = 0.1, n_estimators: int = 100, 
@@ -171,28 +172,23 @@ class GradientBoostingEstimator(ABC):
     def _update_leaf_nodes(self, 
                            tree: DecisionTreeRegressor, 
                            X: np.ndarray, y: np.ndarray, 
-                           pseudo_resid: np.ndarray):
+                           residuals: np.ndarray):
         '''
         Расчитывает оптимальное значение gamma для каждой листовой ноды (формула №18 в статье Фридмана)
-        Для регрессии: трансформация не производится
-        Для классификации: модель обучается на вероятностях, а предсказывает логарифм шансов, 
-                           производится трансформармация для заданной функции потерь
 
         :param tree: дерево решений
         :param X: матрица независимых переменных
         :param y: зависимая переменная
-        :param pseudo_resid: антиградиент функции потерь на шаге t
+        :param residuals: антиградиент функции потерь 
         '''
         pass
 
     @abstractmethod
     def _transform_ensemble_pred(self, ensemble: np.ndarray) -> np.ndarray:
         '''
-        Преобразовывает предсказание ансамбля на шаге t.
-        Для регрессии: преобразование не производится.
-        Для классификации: преобразовываем логарифм шансов в вероятность через сигмоиду.
+        Преобразовывает предсказание ансамбля.
 
-        :param ensemble: предсказание ансамбля на шаге t
+        :param ensemble: предсказание ансамбля
         :return: преобразованное предсказание ансамбля
         '''
         pass
@@ -210,8 +206,7 @@ class GradientBoostingEstimator(ABC):
             decision_tree.fit(X, residuals)
             self._update_leaf_nodes(decision_tree, X, y, residuals)
             self._decision_trees.append(decision_tree)
-            gamma = decision_tree.predict(X)
-            ensemble += self.learning_rate * gamma
+            ensemble += self.learning_rate * decision_tree.predict(X)
 
     @abstractmethod
     def predict(self, X: np.ndarray) -> np.ndarray:
@@ -235,7 +230,7 @@ class MyGradientBoostingRegressor(GradientBoostingEstimator):
     def _update_leaf_nodes(self, 
                            tree: DecisionTreeRegressor, 
                            X: np.ndarray, y: np.ndarray, 
-                           pseudo_resid: np.ndarray):
+                           residuals: np.ndarray):
         pass
 
     def _transform_ensemble_pred(self, ensemble: np.ndarray) -> np.ndarray:
@@ -262,14 +257,14 @@ class MyGradientBoostingClassifier(GradientBoostingEstimator):
     def _update_leaf_nodes(self, 
                            tree: DecisionTreeRegressor, 
                            X: np.ndarray, y: np.ndarray, 
-                           pseudo_resid: np.ndarray):
+                           residuals: np.ndarray):
         leafs = tree.apply(X)
         unique_leafs = np.unique(leafs)
         for leaf in unique_leafs:
             idx = np.nonzero(leafs == leaf)[0]
-            p = np.abs(y[idx] - pseudo_resid[idx])
+            p = np.abs(y[idx] - residuals[idx])
             assert not np.any((p < 0) | (p > 1)), "вероятность вне допустимого диапазона [0,1] при расчете значения листа"
-            numerator = np.mean(pseudo_resid[idx])
+            numerator = np.mean(residuals[idx])
             denominator = np.mean(p / (1 - p))
             gamma = numerator / denominator
             tree.tree_.value[leaf, 0, 0] = gamma    
