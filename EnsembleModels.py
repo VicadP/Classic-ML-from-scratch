@@ -184,7 +184,7 @@ class GradientBoostingEstimator(ABC):
         pass
 
     @abstractmethod
-    def _transform_ensemble_pred(self, ensemble: np.ndarray) -> np.ndarray:
+    def _transform_ensemble_pred(self, ensemble_pred: np.ndarray) -> np.ndarray:
         '''
         Преобразовывает предсказание ансамбля.
 
@@ -199,14 +199,14 @@ class GradientBoostingEstimator(ABC):
         :param y: независимая переменная
         '''
         self.initial_pred = self._compute_initial_pred(y)
-        ensemble = np.full(X.shape[0], self.initial_pred)
+        ensemble_pred = np.full(X.shape[0], self.initial_pred)
         for _ in range(self.n_estimators):
-            residuals = y - self._transform_ensemble_pred(ensemble)
+            residuals = y - self._transform_ensemble_pred(ensemble_pred)
             decision_tree = self._init_decision_tree()
             decision_tree.fit(X, residuals)
-            self._update_leaf_nodes(decision_tree, X, y, residuals)
+            self._update_leaf_nodes(decision_tree.tree_, X, y, residuals)
             self._decision_trees.append(decision_tree)
-            ensemble += self.learning_rate * decision_tree.predict(X)
+            ensemble_pred += decision_tree.predict(X)
 
     @abstractmethod
     def predict(self, X: np.ndarray) -> np.ndarray:
@@ -231,16 +231,19 @@ class MyGradientBoostingRegressor(GradientBoostingEstimator):
                            tree: DecisionTreeRegressor, 
                            X: np.ndarray, y: np.ndarray, 
                            residuals: np.ndarray):
-        pass
+        X = X.astype(np.float32)
+        leafs = tree.apply(X)
+        for leaf in np.unique(leafs):
+            tree.value[leaf, 0, 0] *= self.learning_rate          
 
-    def _transform_ensemble_pred(self, ensemble: np.ndarray) -> np.ndarray:
-        return ensemble
+    def _transform_ensemble_pred(self, ensemble_pred: np.ndarray) -> np.ndarray:
+        return ensemble_pred
 
     def predict(self, X: np.ndarray) -> np.ndarray:
-        ensemble = np.full(X.shape[0], self.initial_pred)
+        ensemble_pred = np.full(X.shape[0], self.initial_pred)
         for i in range(self.n_estimators):
-            ensemble += self.learning_rate * self._decision_trees[i].predict(X)
-        return ensemble
+            ensemble_pred += self._decision_trees[i].predict(X)
+        return ensemble_pred
 
 class MyGradientBoostingClassifier(GradientBoostingEstimator):
     def _init_decision_tree(self)  -> DecisionTreeRegressor:
@@ -251,33 +254,34 @@ class MyGradientBoostingClassifier(GradientBoostingEstimator):
                     criterion = self.criterion)
 
     def _compute_initial_pred(self, y: np.ndarray) -> float:
-        p = np.mean(y)
-        return np.log(p / (1 - p))
+        return 0. # 0. log odds == 0.5 proba
 
     def _update_leaf_nodes(self, 
                            tree: DecisionTreeRegressor, 
                            X: np.ndarray, y: np.ndarray, 
                            residuals: np.ndarray):
+        X = X.astype(np.float32)
         leafs = tree.apply(X)
-        unique_leafs = np.unique(leafs)
-        for leaf in unique_leafs:
+        for leaf in np.unique(leafs):
             idx = np.nonzero(leafs == leaf)[0]
-            p = np.abs(y[idx] - residuals[idx])
+            p = y[idx] - residuals[idx]
             assert not np.any((p < 0) | (p > 1)), "вероятность вне допустимого диапазона [0,1] при расчете значения листа"
             numerator = np.mean(residuals[idx])
-            denominator = np.mean(p / (1 - p))
+            denominator = np.mean(p * (1 - p))
             gamma = numerator / denominator
-            tree.tree_.value[leaf, 0, 0] = gamma    
+            tree.value[leaf, 0, 0] = self.learning_rate * gamma
 
-    def _transform_ensemble_pred(self, ensemble: np.ndarray) -> np.ndarray:
-        return 1 / (1 + np.exp(-ensemble))
+    def _transform_ensemble_pred(self, ensemble_pred: np.ndarray) -> np.ndarray:
+        return 1 / (1 + np.exp(-ensemble_pred))
 
     def predict_proba(self, X: np.ndarray) -> np.ndarray:
-        ensemble = np.full(X.shape[0], self.initial_pred)
+        ensemble_pred = np.full(X.shape[0], self.initial_pred)
         for i in range(self.n_estimators):
-            ensemble += self.learning_rate * self._decision_trees[i].predict(X)
-        return self._transform_ensemble_pred(ensemble)
+            ensemble_pred += self._decision_trees[i].predict(X)
+        return self._transform_ensemble_pred(ensemble_pred)
 
     def predict(self, X: np.ndarray) -> np.ndarray:
-        proba = self.predict_proba(X)
-        return (proba > 0.5).astype(int)
+        ensemble_pred = np.full(X.shape[0], self.initial_pred)
+        for i in range(self.n_estimators):
+            ensemble_pred += self._decision_trees[i].predict(X)
+        return (ensemble_pred > 0.).astype(int)
