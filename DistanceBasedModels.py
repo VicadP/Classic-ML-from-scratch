@@ -1,9 +1,7 @@
 import logging
 from abc import ABC, abstractmethod
 import numpy as np
-from scipy.spatial.distance import euclidean
-from typing import Callable
-from typing import Tuple
+import faiss
 
 logger = logging.getLogger('model training')
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', datefmt='%Y-%m-%d %H:%M:%S %p')
@@ -11,80 +9,60 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(level
 class KNNEstimator(ABC):
     '''
     Интерфейс для метода ближайших соседей для классификации и регрессии.
-    Метрика для дистанции - L2.
+    Для ускорения обучения и предсказания используем библиотеку faiss (находит ближайших соседей и возвращает дистанцию до них)
     '''
 
-    def __init__(self, n_neighbors: int = 5, metric: Callable = euclidean, weights: str = "uniform"):
+    def __init__(self, k: int = 5, weights: str = "uniform"):
         '''
-        :param n_neighbors: кол-во ближайших соседей
-        :param metric: метрика дистанции между наблюдениями
+        :param k: кол-во ближайших соседей
         :param weights: стратегия взвешивания ближайших соседей
         '''
-        self.n_neighbors = n_neighbors
-        self.metric = metric
+        self.k = k
         assert weights in ["uniform", "distance"], "Некорректный ввод, допустимые значения 'uniform', 'distance'"
         self.weights = weights
+        self.index = None
     
     def fit(self, X: np.ndarray, y: np.ndarray):
         '''
         :param X: матрица независимых переменных
         :param y: зависимая переменная
         '''
-        self.X = X.copy()
-        self.y = y.copy()
+        self.index = faiss.IndexFlatL2(X.shape[1]) # дефолтно используем L2 дистанцию
+        self.index.add(X.astype(np.float32)) # сохраняем обучающую выборку
+        self._y = y
 
-    def _apply_weights(self, distances: np.ndarray, neighbors: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
+    def _compute_weights(self, distances: np.ndarray) -> np.ndarray:
         '''
-        Расчитывает веса для n_neighbors ближайщих соседей
+        Расчитывает веса для ближайших соседий на основании дистанции
 
-        :param distances: дистанция до n_neighbors ближайщих соседей
-        :param neighbors: зависимая переменная n_neighbors ближайщих соседей
-        :return: массив весов и массив лейблов
+        :param distances: дистанция до k ближайщих соседей
+        :return: вектор весов
         '''
         if self.weights == 'uniform':
-            weights_by_neighbor = np.squeeze(np.array([(1, neighbor) for _, neighbor in zip(distances, neighbors)]))
-            return weights_by_neighbor[:, 0], weights_by_neighbor[:, 1]
+            return np.ones_like(distances)
         if self.weights == 'distance':
-            weights_by_neighbor = np.squeeze(np.array([((1 / distance + 1e-4), neighbor) for distance, neighbor in zip(distances, neighbors)]))
-            return weights_by_neighbor[:, 0], weights_by_neighbor[:, 1]
-
-    def _compute_prediction(self, observation: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
-        '''
-        Расчитывает дистанцию для единичного наблюдения до всех наблюдений в обучающей выборке, выделяя n_neighbors ближайших соседей.
-        Триггерит расчет весов для найденых ближайших соседей.
-
-        :param observation: вектор из независимых переменных (единичное наблюдение)
-        :return: массив весов и массив лейблов
-        '''
-        n_neighbors = np.squeeze(np.array(sorted([(self.metric(x, observation), y) for x, y in zip(self.X, self.y)])[:self.n_neighbors]))
-        n_weights, n_labels = self._apply_weights(n_neighbors[:, 0], n_neighbors[:, 1])
-        return n_weights, n_labels
+            return 1 / (distances + 1e-9)
 
     @abstractmethod
     def predict(self, X: np.ndarray) -> np.ndarray:
+        '''
+        :param X: матрица независимых переменных
+        :return: средневзвешенное для регрессии и мажоритарный средневзвешенный класс для классификации
+        '''
         pass
 
 class MyKNNRegressor(KNNEstimator):
     def predict(self, X: np.ndarray) -> np.ndarray:
-        predictions = []
-        for x in X:
-            weights, labels = self._compute_prediction(x)
-            predictions.append(np.sum(weights * labels) / np.sum(weights))
-        return np.array(predictions)
+        distances, idx = self.index.search(X.astype(np.float32), k=self.k)
+        weights = self._compute_weights(distances)
+        return np.sum(self._y[idx] * weights, axis=1) / np.sum(weights, axis=1)
     
-
 class MyKNNClassifiers(KNNEstimator):
     def predict_proba(self, X: np.ndarray) -> np.ndarray:
-        '''
-        :param X: матрица независимых переменных
-        :return: вектор предсказаний-вероятностей
-        '''
-        predictions = []
-        for x in X:
-            weights, labels = self._compute_prediction(x)
-            predictions.append(np.sum(weights[labels == 1]) / np.sum(weights))
-        return np.array(predictions)
+        distances, idx = self.index.search(X.astype(np.float32), k=self.k)
+        weights = self._compute_weights(distances)
+        return np.sum(self._y[idx] * weights, axis=1) / np.sum(weights, axis=1)
 
     def predict(self, X: np.ndarray) -> np.ndarray:
-        probabilities = self.predict_proba(X)
-        return (probabilities > 0.5).astype(int)
+        proba = self.predict_proba(X)
+        return (proba > 0.5).astype(int)

@@ -1,12 +1,10 @@
 import logging
-from typing import DefaultDict
-from typing import Union
+from typing import DefaultDict, Union, Optional, List
 import numpy as np
 from abc import ABC, abstractmethod
 from collections import defaultdict
 from sklearn.tree import DecisionTreeClassifier, DecisionTreeRegressor
-from sklearn.metrics import r2_score
-from sklearn.metrics import accuracy_score
+from sklearn.metrics import r2_score, accuracy_score
 
 logger = logging.getLogger('model training')
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', datefmt='%Y-%m-%d %H:%M:%S %p')
@@ -16,8 +14,8 @@ class RandomForestEstimator(ABC):
     Интерфейс для случайного леса для регрессии и классификации с OOB оценкой
     '''
 
-    def __init__(self, n_estimators: int = 100, max_depth: int | None = None, 
-                 min_samples_split: int = 2, max_features: str = "sqrt", criterion: str | None = None):
+    def __init__(self, n_estimators: int = 100, max_depth: Optional[int] = None, 
+                 min_samples_split: int = 2, max_features: str = "sqrt", criterion: Optional[str] = None):
         '''
         :param n_estimators: кол-во деревьев в ансамбле
         :param max_depth: глубина дерева
@@ -75,15 +73,15 @@ class RandomForestEstimator(ABC):
         :param X: матрица независимых переменных
         :return: вектор предсказаний
         '''
-        tree_predictions = []
+        pred = []
         for decision_tree in self._decision_trees:
-            prediction = decision_tree.predict(X).reshape(-1,1)
-            tree_predictions.append(prediction)
-        tree_predictions = np.concatenate(tree_predictions, axis=1)
-        return self._compute_ensemble_prediction(tree_predictions)
+            tree_pred = decision_tree.predict(X).reshape(-1,1)
+            pred.append(tree_pred)
+        pred = np.concatenate(pred, axis=1)
+        return self._compute_ensemble_prediction(pred)
 
     @abstractmethod
-    def _compute_ensemble_prediction(self, tree_predictions: np.ndarray) -> np.ndarray:
+    def _compute_ensemble_prediction(self, predictions: np.ndarray) -> np.ndarray:
         '''
         :return среднее или мажоритарный класс по n_estimators предсказаниям
         '''
@@ -102,8 +100,8 @@ class MyRandomForestRegressor(RandomForestEstimator):
         oob_prediction = np.array([np.mean(predictions) for predictions in oob_predictions.values()])
         return r2_score(true_labels, oob_prediction)
 
-    def _compute_ensemble_prediction(self, tree_predictions: np.ndarray) -> np.ndarray:
-        return np.mean(tree_predictions, axis=1)
+    def _compute_ensemble_prediction(self, predictions: np.ndarray) -> np.ndarray:
+        return np.mean(predictions, axis=1)
     
 class MyRandomForestClassifier(RandomForestEstimator):
     def _init_decision_tree(self) -> Union[DecisionTreeClassifier, DecisionTreeRegressor]:
@@ -118,20 +116,20 @@ class MyRandomForestClassifier(RandomForestEstimator):
         oob_prediction = np.array([np.bincount(predictions).argmax() for predictions in oob_predictions.values()])
         return accuracy_score(true_labels, oob_prediction)
 
-    def _compute_ensemble_prediction(self, tree_predictions: np.ndarray) -> np.ndarray:
-        return np.apply_along_axis(lambda pred: np.bincount(pred).argmax(), axis=1, arr=tree_predictions.astype(int))
+    def _compute_ensemble_prediction(self, predictions: np.ndarray) -> np.ndarray:
+        return np.apply_along_axis(lambda pred: np.bincount(pred).argmax(), axis=1, arr=predictions.astype(int))
     
     def predict_proba(self, X: np.ndarray) -> np.ndarray:
         '''
         :param X: матрица независимых переменных
         :return: вектор предсказаний
         '''
-        tree_predictions = []
+        pred = []
         for decision_tree in self._decision_trees:
-            prediction = decision_tree.predict(X).reshape(-1,1)
-            tree_predictions.append(prediction)
-        tree_predictions = np.concatenate(tree_predictions, axis=1)
-        return np.mean(tree_predictions, axis=1)
+            tree_pred = decision_tree.predict(X).reshape(-1,1)
+            pred.append(tree_pred)
+        pred = np.concatenate(pred, axis=1)
+        return np.mean(pred, axis=1)
 
 class GradientBoostingEstimator(ABC):
     '''
@@ -140,7 +138,7 @@ class GradientBoostingEstimator(ABC):
     '''
 
     def __init__(self, learning_rate: float = 0.1, n_estimators: int = 100, 
-                 min_samples_split: int = 2, max_depth: int = 3, criterion: str | None = None):
+                 min_samples_split: int = 2, max_depth: int = 3, criterion: Optional[str] = None):
         '''
         :param learning_rate: скорость обучения
         :param n_estimators: кол-во моделей в ансамбле

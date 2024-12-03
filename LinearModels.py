@@ -1,7 +1,7 @@
 import logging
 import numpy as np
 from abc import ABC, abstractmethod
-from typing import Callable
+from typing import Callable, Optional, Union
 
 
 logger = logging.getLogger('model training')
@@ -9,18 +9,17 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(level
 
 class LinearEstimator(ABC):
     '''
-    Интерфейс для линейной и логистической регрессии с оптимизацией через градиентный спуск. 
-    Функционал ошибки для регрессии - MSE, классификации - LogLoss.
+    Интерфейс для линейной и логистической регрессии с оптимизацией через градиентный спуск
     '''
-    def __init__(self, n_iter: int = 1000, learning_rate: float | Callable = 0.1, tolerance: float = 1e-4,
-                 penalty: str | None = None, alpha: float = 1.0, verbose: bool = False):
+    def __init__(self, n_iter: int = 1000, learning_rate: Union[float, Callable] = 0.1, tolerance: float = 1e-4,
+                 penalty: Optional[str] = None, alpha: float = 1.0, verbose: bool = False):
         '''
         :param n_iter: кол-во итераций градиентного спуска
         :param learning_rate: скорость обучения градиентного спуска
         :param tolerance: порог для критерия останова
         :param penalty: тип регуляризации. Возможные значения None(OLS), "L1"(Lasso), "L2"(Ridge)
         :param alpha: коэффициент регуляризации
-        :param verbose: вывод промежуточной информации об обучении на каждой 10-ой итерации градиентного спуска
+        :param verbose: вывод промежуточной информации об обучении
         '''
         self.n_iter = n_iter
         self.learning_rate = learning_rate
@@ -29,6 +28,8 @@ class LinearEstimator(ABC):
         self.penalty = penalty
         self.alpha = alpha
         self.verbose = verbose
+        self.objective_path = [] # функционал ошибки на всем пути расчета градиента
+        self.weights_path = [] # веса на всем пути расчета градиента
 
     @staticmethod
     def add_constant(X: np.ndarray) -> np.ndarray:
@@ -58,7 +59,7 @@ class LinearEstimator(ABC):
         :param X: матрица независимых переменных
         :param y: зависимая переменная
         '''
-        self._X, self._y = self.add_constant(X), y.copy()
+        self._X, self._y = self.add_constant(X), y
         self.n, self.p = self._X.shape
         self.fitted_weights = self._trigger_gd()
         
@@ -69,8 +70,8 @@ class LinearEstimator(ABC):
         :return: подобранный вектор весов
         '''
         weights = np.random.normal(loc=0, scale=1, size=self.p)
-        self.objective_path = [self._compute_loss(weights)] # функционал ошибки на всем пути расчета градиента
-        self.weights_path = [weights] # веса на всем пути расчета градиента
+        self.objective_path.append(self._compute_loss(weights))
+        self.weights_path.append(weights)
         for epoch in range(self.n_iter):
             if callable(self.learning_rate): # если хотим задать динамическую скорость обучения
                 step = self.learning_rate(epoch) * self._compute_gradient(weights)
@@ -89,10 +90,9 @@ class LinearEstimator(ABC):
         return self.weights_path[-1]
 
     @abstractmethod
-    def predict(self, X: np.ndarray, threshold: float = 0.5) -> np.ndarray:
+    def predict(self, X: np.ndarray) -> np.ndarray:
         '''
         :param X: матрица независимых переменных
-        :param threshold: порог для конвертации вероятностей в лейблы в задаче классификации
         :return: вектор предсказаний
         '''
         pass
@@ -116,9 +116,9 @@ class MyLinearRegression(LinearEstimator):
             alpha_scaled = self.alpha / self.n
             return np.dot(self._X.T, (np.dot(self._X, weights) - self._y)) / self.n + np.hstack([0, alpha_scaled * weights[1:]])
 
-    def predict(self, X: np.ndarray, threshold: float = 0.5) -> np.ndarray:
-        _X = self.add_constant(X)
-        return np.dot(_X, self.fitted_weights)
+    def predict(self, X: np.ndarray) -> np.ndarray:
+        X = self.add_constant(X)
+        return np.dot(X, self.fitted_weights)
     
 class MyLogisticRegression(LinearEstimator):
     @staticmethod
@@ -148,10 +148,10 @@ class MyLogisticRegression(LinearEstimator):
         if self.penalty == "L2":
             pass
 
-    def predict(self, X: np.ndarray, threshold: float = 0.5) -> np.ndarray:
+    def predict(self, X: np.ndarray) -> np.ndarray:
         X = self.add_constant(X)
-        probabilities = self.sigmoid(X, self.fitted_weights)
-        return np.array([1 if p > threshold else 0 for p in probabilities])
+        proba = self.sigmoid(X, self.fitted_weights)
+        return (proba > 0.5).astype(int)
 
     def predict_proba(self, X: np.ndarray) -> np.ndarray:
         '''
@@ -159,8 +159,8 @@ class MyLogisticRegression(LinearEstimator):
         :return: вектор вероятностей принадлежности к 1 классу
         '''
         X = self.add_constant(X)
-        probabilities = self.sigmoid(X, self.fitted_weights)
-        return probabilities
+        proba = self.sigmoid(X, self.fitted_weights)
+        return proba
 
 class MySVMClassifier():
     '''
@@ -172,7 +172,7 @@ class MySVMClassifier():
         :param learning_rate: базовая скорость обучения (затухает на протяжении обучения)
         :param alpha: коэффициент регуляризации, обратно пропорционален
         :param tolerance: порог для критерии остнова
-        :param verbose: выводить ли информацию об обучении
+        :param verbose: вывод промежуточной информации об обучении
         '''
         self.n_iter = n_iter
         self.initial_learning_rate = learning_rate
@@ -180,6 +180,8 @@ class MySVMClassifier():
         self.alpha = 1 / alpha
         self.tolerance = tolerance
         self.verbose = verbose
+        self.objective_path = []
+        self.weights_path = []
 
     @staticmethod
     def add_constant(X: np.ndarray) -> np.ndarray:
@@ -248,8 +250,8 @@ class MySVMClassifier():
         :return: подобранный вектор весов
         '''
         weights = np.random.normal(loc=0, scale=0.1, size=self.p)
-        self.objective_path = [self._compute_loss(self._X, self._y, weights)] # считаем функционал ошибки на всей выборке
-        self.weights_path = [weights]
+        self.objective_path.append(self._compute_loss(self._X, self._y, weights)) # считаем функционал ошибки на всей выборке
+        self.weights_path.append(weights)
         for epoch in range(self.n_iter):
             ind = np.random.permutation(self.n)
             X_shuffled = self._X[ind]
@@ -272,6 +274,6 @@ class MySVMClassifier():
         :param X: матрица независимых переменных
         :return: вектор предсказаний
         '''
-        _X = self.add_constant(X)
-        predictions = np.sign(np.dot(_X, self.fitted_weights))
-        return self._inverse_transform_target(predictions)
+        X = self.add_constant(X)
+        pred = np.sign(np.dot(X, self.fitted_weights))
+        return self._inverse_transform_target(pred)
